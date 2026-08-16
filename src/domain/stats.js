@@ -20,6 +20,8 @@
  * @property {number} courage      0..1 — makin rendah makin cepat kabur saat sekarat
  * @property {number} aggression   0..1 — makin tinggi makin suka merapat ke lawan
  * @property {number} knockback    Pengali kekuatan dorongan yang diberikan
+ * @property {number} projectileSpeed  0 = hitscan (pasti kena). >0 = proyektil
+ *                                     terbang dengan kecepatan ini (bisa meleset)
  */
 
 /** @type {Stats} */
@@ -38,6 +40,7 @@ export const BASE_STATS = Object.freeze({
   courage: 0.5,
   aggression: 0.5,
   knockback: 1,
+  projectileSpeed: 0,
 });
 
 export const STAT_KEYS = Object.keys(BASE_STATS);
@@ -62,6 +65,7 @@ const CLAMPS = {
   courage: [0, 1],
   aggression: [0, 1],
   knockback: [0.2, 4],
+  projectileSpeed: [0, 1400],
 };
 
 /**

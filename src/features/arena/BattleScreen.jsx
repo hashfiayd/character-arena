@@ -13,7 +13,7 @@ const MODES = [
   { id: BattleMode.TEAM, label: 'Tim', min: 4, max: 8, hint: 'Dua tim. Klik lagi kartu terpilih untuk pindah tim.' },
 ];
 
-export function BattleScreen({ roster, onRecordResult }) {
+export function BattleScreen({ roster, audio, onRecordResult }) {
   const [modeId, setModeId] = useState(BattleMode.FFA);
   const [selectedIds, setSelectedIds] = useState([]);
   const [teamById, setTeamById] = useState({});
@@ -98,15 +98,17 @@ export function BattleScreen({ roster, onRecordResult }) {
     setResult(null);
     setSimulation(sim);
     setRunning(true);
-  }, [modeId, seed, selected, teamOf, validation]);
+    audio?.startMusic();
+  }, [audio, modeId, seed, selected, teamOf, validation]);
 
   const handleFinish = useCallback(
     (battleResult) => {
       setResult(battleResult);
       setRunning(false);
+      audio?.stopMusic();
       onRecordResult(battleResult);
     },
-    [onRecordResult],
+    [audio, onRecordResult],
   );
 
   const rematch = useCallback(() => {
@@ -114,7 +116,8 @@ export function BattleScreen({ roster, onRecordResult }) {
     setSimulation(null);
     setResult(null);
     setRunning(false);
-  }, []);
+    audio?.stopMusic();
+  }, [audio]);
 
   return (
     <div className="arena-layout">
@@ -124,6 +127,7 @@ export function BattleScreen({ roster, onRecordResult }) {
             simulation={simulation}
             running={running}
             speed={speed}
+            audio={audio}
             onUpdate={() => setTick((t) => t + 1)}
             onFinish={handleFinish}
           />

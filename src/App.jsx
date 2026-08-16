@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useRoster } from './hooks/useRoster.js';
+import { useAudio } from './audio/useAudio.js';
+import { AudioControls } from './ui/AudioControls.jsx';
 import { CharacterForge } from './features/spinwheel/CharacterForge.jsx';
 import { RosterPanel } from './features/roster/RosterPanel.jsx';
 import { BattleScreen } from './features/arena/BattleScreen.jsx';
@@ -13,6 +15,7 @@ const TABS = [
 export default function App() {
   const [tab, setTab] = useState('forge');
   const roster = useRoster();
+  const audio = useAudio();
 
   return (
     <div className="app">
@@ -25,7 +28,14 @@ export default function App() {
           </p>
         </div>
 
-        <nav className="tabs" role="tablist">
+        <div className="app__controls">
+          <AudioControls
+            settings={audio.settings}
+            onChange={audio.update}
+            unlocked={audio.unlocked}
+          />
+
+          <nav className="tabs" role="tablist">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -36,12 +46,14 @@ export default function App() {
             >
               {t.label}
             </button>
-          ))}
-        </nav>
+            ))}
+          </nav>
+        </div>
       </header>
 
       {tab === 'forge' && (
         <CharacterForge
+          audio={audio}
           onSave={(character) => {
             roster.addCharacter(character);
             setTab('roster');
@@ -60,7 +72,11 @@ export default function App() {
       )}
 
       {tab === 'arena' && (
-        <BattleScreen roster={roster} onRecordResult={roster.recordBattle} />
+        <BattleScreen
+          roster={roster}
+          audio={audio}
+          onRecordResult={roster.recordBattle}
+        />
       )}
     </div>
   );

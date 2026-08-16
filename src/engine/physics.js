@@ -42,8 +42,20 @@ export function integrate(fighter, dt) {
     fighter.vel.y *= s;
   }
 
+  // Posisi langkah sebelumnya disimpan supaya renderer bisa menginterpolasi
+  // di antara dua langkah fisika. Tanpa ini, layar 144Hz menampilkan langkah
+  // 60Hz yang sama dua kali lalu melompat — terbaca sebagai getaran halus.
+  fighter.prevPos.x = fighter.pos.x;
+  fighter.prevPos.y = fighter.pos.y;
+
   fighter.pos.x += fighter.vel.x * dt;
   fighter.pos.y += fighter.vel.y * dt;
+
+  // Sudut guling diakumulasi dari jarak tempuh dibagi keliling, persis seperti
+  // roda menggelinding. Arahnya mengikuti komponen horizontal supaya bola yang
+  // bergerak ke kiri berguling ke kiri.
+  const travelled = Math.hypot(fighter.vel.x, fighter.vel.y) * dt;
+  fighter.roll += (travelled / fighter.radius) * Math.sign(fighter.vel.x || 1);
 
   fighter.trail.push({ x: fighter.pos.x, y: fighter.pos.y });
   if (fighter.trail.length > TRAIL_LENGTH) fighter.trail.shift();

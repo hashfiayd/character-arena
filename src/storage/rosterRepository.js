@@ -10,8 +10,16 @@
  *   - Kalau nanti pindah ke Firebase/IndexedDB, hanya file ini yang berubah.
  */
 
+import { SLOTS } from '../data/pools.js';
+
 const STORAGE_KEY = 'character-arena/roster/v1';
-const SCHEMA_VERSION = 1;
+
+/**
+ * Riwayat skema:
+ *   1 — 6 slot (Ras, Kelas, Senjata, Zirah, Sifat, Berkah)
+ *   2 — ditambah 4 roda atribut bertingkat
+ */
+const SCHEMA_VERSION = 2;
 
 const isBrowser = typeof window !== 'undefined' && !!window.localStorage;
 
@@ -34,6 +42,42 @@ function isValidCharacter(value) {
   );
 }
 
+/**
+ * Melengkapi karakter lama dengan slot yang belum ada.
+ *
+ * Ini alasan `version` dipasang sejak awal. Saat empat roda atribut
+ * ditambahkan, semua karakter yang sudah tersimpan tiba-tiba kehilangan empat
+ * slot. `hydrateCharacter` memang tidak crash — slot yang hilang cuma tersaring
+ * keluar — tapi diam-diam menghasilkan karakter tanpa atribut sama sekali:
+ * strip pip kosong dan stat lebih lemah dari seharusnya. Bug yang tidak
+ * menimbulkan error justru yang paling lama tidak ketahuan.
+ *
+ * Pilihan alternatifnya adalah menghapus roster lama begitu skema berubah.
+ * Itu lebih sederhana, tapi membuang data pemain untuk masalah yang bisa
+ * diselesaikan dengan default yang masuk akal.
+ *
+ * Slot yang hilang diisi opsi TENGAH ("Biasa" untuk tingkatan) — netral, tidak
+ * memberi keuntungan maupun kerugian pada karakter lama.
+ */
+function migrateCharacter(character) {
+  const picks = { ...character.picks };
+  let changed = false;
+
+  for (const slot of SLOTS) {
+    if (picks[slot.id] && slot.options.some((o) => o.id === picks[slot.id])) {
+      continue;
+    }
+    const fallback =
+      slot.kind === 'tier'
+        ? slot.options.find((o) => o.rank === 2)
+        : slot.options[Math.floor(slot.options.length / 2)];
+    picks[slot.id] = fallback.id;
+    changed = true;
+  }
+
+  return changed ? { ...character, picks } : character;
+}
+
 export function loadRoster() {
   if (!isBrowser) return emptyState();
 
@@ -42,20 +86,28 @@ export function loadRoster() {
     if (!raw) return emptyState();
 
     const parsed = JSON.parse(raw);
-    if (parsed?.version !== SCHEMA_VERSION || !Array.isArray(parsed.characters)) {
+    if (!Array.isArray(parsed?.characters)) return emptyState();
+
+    // Versi yang LEBIH BARU dari yang dikenal build ini tidak boleh dipaksa
+    // dibaca — itu terjadi kalau user membuka tab lama setelah deploy baru,
+    // dan menulis ulang datanya justru merusak roster versi barunya.
+    if (typeof parsed.version !== 'number' || parsed.version > SCHEMA_VERSION) {
       return emptyState();
     }
 
     return {
       version: SCHEMA_VERSION,
-      characters: parsed.characters.filter(isValidCharacter).map((c) => ({
-        ...c,
-        record: {
-          wins: c.record?.wins ?? 0,
-          battles: c.record?.battles ?? 0,
-          kills: c.record?.kills ?? 0,
-        },
-      })),
+      characters: parsed.characters
+        .filter(isValidCharacter)
+        .map(migrateCharacter)
+        .map((c) => ({
+          ...c,
+          record: {
+            wins: c.record?.wins ?? 0,
+            battles: c.record?.battles ?? 0,
+            kills: c.record?.kills ?? 0,
+          },
+        })),
     };
   } catch (error) {
     console.warn('[roster] gagal membaca storage, memulai dari kosong.', error);

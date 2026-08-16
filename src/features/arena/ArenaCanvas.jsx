@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { ARENA, SIM } from '../../engine/constants.js';
 import { ArenaRenderer } from './renderer.js';
+import { playBattleEvents } from '../../audio/battleAudio.js';
 
 /**
  * Menjalankan game loop dan menggambar simulasi.
@@ -17,14 +18,14 @@ import { ArenaRenderer } from './renderer.js';
  * Efek visual (partikel, angka damage) sengaja diperbarui dengan dt NYATA,
  * bukan dt simulasi, supaya animasinya tetap mulus dan tidak ikut terpotong.
  */
-export function ArenaCanvas({ simulation, running, speed = 1, onUpdate, onFinish }) {
+export function ArenaCanvas({ simulation, running, speed = 1, audio, onUpdate, onFinish }) {
   const canvasRef = useRef(null);
   const rendererRef = useRef(null);
   const stateRef = useRef({ running, speed, onUpdate, onFinish });
 
   // Menyimpan props terbaru di ref agar loop rAF tidak perlu dibuat ulang
   // setiap render — membuat ulang loop akan mereset akumulator dan bikin patah.
-  stateRef.current = { running, speed, onUpdate, onFinish };
+  stateRef.current = { running, speed, audio, onUpdate, onFinish };
 
   if (!rendererRef.current) rendererRef.current = new ArenaRenderer();
 
@@ -55,8 +56,13 @@ export function ArenaCanvas({ simulation, running, speed = 1, onUpdate, onFinish
       const dtReal = Math.min((now - last) / 1000, 0.25);
       last = now;
 
-      const { running: isRunning, speed: rate, onUpdate: notify, onFinish: finish } =
-        stateRef.current;
+      const {
+        running: isRunning,
+        speed: rate,
+        audio: sound,
+        onUpdate: notify,
+        onFinish: finish,
+      } = stateRef.current;
       const renderer = rendererRef.current;
       const sim = simulation;
 
@@ -73,7 +79,11 @@ export function ArenaCanvas({ simulation, running, speed = 1, onUpdate, onFinish
         // detik. Membuangnya lebih baik daripada memicu "spiral of death".
         if (accumulator > SIM.dt * SIM.maxStepsPerFrame) accumulator = 0;
 
-        renderer.ingest(sim.drainEvents());
+        // Satu daftar event, dua konsumen dengan aturan berbeda: renderer
+        // menggambar semuanya, audio membuang sebagian besar.
+        const frameEvents = sim.drainEvents();
+        renderer.ingest(frameEvents);
+        playBattleEvents(frameEvents, sound);
 
         sinceNotify += dtReal;
         if (sinceNotify > 0.12) {
@@ -89,7 +99,12 @@ export function ArenaCanvas({ simulation, running, speed = 1, onUpdate, onFinish
       }
 
       renderer.update(dtReal);
-      if (sim) renderer.draw(ctx, sim);
+
+      // Sisa akumulator dinormalisasi jadi 0..1: seberapa jauh waktu render
+      // berada di antara langkah fisika terakhir dan yang berikutnya.
+      // Inilah yang membuat gerakan tetap halus di layar 120/144Hz meski
+      // simulasinya tetap dikunci di 60 langkah per detik.
+      if (sim) renderer.draw(ctx, sim, Math.min(1, accumulator / SIM.dt));
     };
 
     raf = requestAnimationFrame(frame);

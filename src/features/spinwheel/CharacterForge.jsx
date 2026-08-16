@@ -27,7 +27,7 @@ const STAT_VIEW = [
   { key: 'regen', label: 'Regen', max: 12, color: '#86efac', format: (v) => `${v.toFixed(1)}/s` },
 ];
 
-export function CharacterForge({ onSave }) {
+export function CharacterForge({ onSave, audio }) {
   // Satu RNG untuk seluruh sesi forge — bukan Math.random per-putaran — supaya
   // urutan hasilnya bisa direproduksi kalau nanti kamu mau menambah fitur
   // "share seed karakter".
@@ -169,6 +169,7 @@ export function CharacterForge({ onSave }) {
             weights={weights}
             pickIndex={pickIndex}
             onSettle={handleSettle}
+            audio={audio}
           />
         )}
       </GlassPanel>

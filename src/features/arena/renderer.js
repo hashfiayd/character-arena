@@ -11,6 +11,7 @@
  */
 
 import { ARENA, FighterState } from '../../engine/constants.js';
+import { drawGear } from './gearArt.js';
 
 const TAU = Math.PI * 2;
 
@@ -281,8 +282,21 @@ export class ArenaRenderer {
 
   // ------------------------------------------------------------------ draw
 
-  draw(ctx, sim) {
+  /**
+   * @param {number} alpha 0..1, posisi waktu render di antara dua langkah
+   *        fisika. Tanpa ini, layar 144Hz menampilkan langkah 60Hz yang sama
+   *        dua kali lalu melompat — terbaca sebagai getaran halus yang sulit
+   *        ditunjuk penyebabnya tapi membuat gerakan terasa murah.
+   */
+  draw(ctx, sim, alpha = 1) {
     const { width, height } = ARENA;
+
+    // Posisi render dihitung sekali di awal dan disimpan di fighter, karena
+    // dipakai berkali-kali: badan, cincin HP, senjata, nama, jejak.
+    for (const f of sim.list) {
+      f.renderX = f.prevPos.x + (f.pos.x - f.prevPos.x) * alpha;
+      f.renderY = f.prevPos.y + (f.pos.y - f.prevPos.y) * alpha;
+    }
 
     ctx.save();
     if (this.shake > 0.2) {
@@ -296,12 +310,19 @@ export class ArenaRenderer {
     this._drawZone(ctx, sim, width, height);
     this._drawObstacles(ctx, sim);
     this._drawTracers(ctx);
+    this._drawProjectiles(ctx, sim);
 
     for (const f of sim.list) {
       if (f.state === FighterState.DEAD) this._drawCorpse(ctx, f);
     }
     for (const f of sim.list) {
       if (f.state !== FighterState.DEAD) this._drawFighter(ctx, f, sim);
+    }
+    // Perlengkapan digambar setelah SEMUA badan, supaya senjata satu petarung
+    // tidak pernah tertimbun badan petarung lain yang kebetulan digambar
+    // belakangan.
+    for (const f of sim.list) {
+      if (f.state !== FighterState.DEAD) drawGear(ctx, f, sim.time);
     }
 
     this._drawWaves(ctx);
@@ -464,19 +485,66 @@ export class ArenaRenderer {
     }
   }
 
+  /**
+   * Proyektil digambar sebagai garis pendek searah terbang, bukan titik.
+   *
+   * Bola kecil terlihat mengambang; garis langsung membaca sebagai "sesuatu
+   * yang melesat", dan arahnya memberi tahu pemain ke mana ia akan pergi —
+   * penting supaya panah yang meleset terlihat sebagai meleset, bukan sebagai
+   * bug tabrakan.
+   */
+  _drawProjectiles(ctx, sim) {
+    const list = sim.projectiles;
+    if (!list?.length) return;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+
+    for (const p of list) {
+      const rgb = this.rgb(p.color);
+
+      for (let i = 1; i < p.trail.length; i++) {
+        const t = i / p.trail.length;
+        ctx.strokeStyle = `rgba(${rgb}, ${t * 0.4})`;
+        ctx.lineWidth = 1 + t * 2.4;
+        ctx.beginPath();
+        ctx.moveTo(p.trail[i - 1].x, p.trail[i - 1].y);
+        ctx.lineTo(p.trail[i].x, p.trail[i].y);
+        ctx.stroke();
+      }
+
+      const speed = Math.hypot(p.vel.x, p.vel.y) || 1;
+      const nx = p.vel.x / speed;
+      const ny = p.vel.y / speed;
+      const half = 7;
+
+      ctx.strokeStyle = `rgba(255,255,255,0.95)`;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(p.pos.x - nx * half, p.pos.y - ny * half);
+      ctx.lineTo(p.pos.x + nx * half, p.pos.y + ny * half);
+      ctx.stroke();
+    }
+
+    ctx.lineCap = 'butt';
+    ctx.restore();
+  }
+
   _drawCorpse(ctx, f) {
     ctx.save();
     ctx.globalAlpha = 0.16;
     ctx.fillStyle = `rgb(${this.rgb(f.color)})`;
     ctx.beginPath();
-    ctx.arc(f.pos.x, f.pos.y, f.radius * 0.7, 0, TAU);
+    ctx.arc(f.renderX ?? f.pos.x, f.renderY ?? f.pos.y, f.radius * 0.7, 0, TAU);
     ctx.fill();
     ctx.restore();
   }
 
   _drawFighter(ctx, f, sim) {
     const rgb = this.rgb(f.color);
-    const { x, y } = f.pos;
+    const x = f.renderX;
+    const y = f.renderY;
     const r = f.radius;
 
     // --- jejak gerak ---
@@ -506,12 +574,26 @@ export class ArenaRenderer {
     ctx.fill();
 
     // --- badan bola ---
+    //
+    // Digambar di ruang lokal supaya squash & stretch bisa diterapkan sebagai
+    // transformasi. Bola dipipihkan tegak lurus arah benturan dan memanjang
+    // searah benturan — prinsip animasi klasik, dan satu-satunya isyarat yang
+    // membuat tumbukan terasa punya bobot alih-alih sekadar bertukar arah.
+    ctx.save();
+    ctx.translate(x, y);
+
+    if (f.squash > 0.01) {
+      ctx.rotate(f.squashAngle);
+      ctx.scale(1 + f.squash, 1 - f.squash * 0.75);
+      ctx.rotate(-f.squashAngle);
+    }
+
     const body = ctx.createRadialGradient(
-      x - r * 0.35,
-      y - r * 0.38,
+      -r * 0.35,
+      -r * 0.38,
       r * 0.12,
-      x,
-      y,
+      0,
+      0,
       r,
     );
     body.addColorStop(0, `rgba(255,255,255,0.92)`);
@@ -519,16 +601,32 @@ export class ArenaRenderer {
     body.addColorStop(1, `rgba(${rgb}, 0.55)`);
     ctx.fillStyle = body;
     ctx.beginPath();
-    ctx.arc(x, y, r, 0, TAU);
+    ctx.arc(0, 0, r, 0, TAU);
     ctx.fill();
+
+    // Tanda guling: dua busur samar yang ikut berputar sesuai jarak tempuh.
+    // Tanpa ini bola meluncur seperti mengambang; dengan ini ia terbaca
+    // sebagai benda padat yang menggelinding.
+    ctx.save();
+    ctx.rotate(f.roll);
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = 1.6;
+    for (const offset of [0, Math.PI]) {
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.58, offset + 0.35, offset + 1.25);
+      ctx.stroke();
+    }
+    ctx.restore();
 
     // Kilatan putih saat baru terkena serangan.
     if (f.hitFlash > 0) {
       ctx.fillStyle = `rgba(255,255,255,${(f.hitFlash / 0.18) * 0.55})`;
       ctx.beginPath();
-      ctx.arc(x, y, r, 0, TAU);
+      ctx.arc(0, 0, r, 0, TAU);
       ctx.fill();
     }
+
+    ctx.restore();
 
     // Rim highlight — inti dari kesan "kaca".
     ctx.strokeStyle = `rgba(255,255,255,0.55)`;

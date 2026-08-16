@@ -111,6 +111,41 @@ export const OBSTACLE = {
   avoidRadius: 1.8,
 };
 
+/**
+ * Proyektil (busur, chakram). Tongkat sihir sengaja TIDAK memakai ini —
+ * itulah yang membedakan keduanya secara mekanik, bukan cuma angka.
+ */
+export const PROJECTILE = {
+  radius: 4,
+  trailLength: 8,
+  /**
+   * Seberapa jauh penembak mengantisipasi gerak target.
+   * 0 = membidik posisi sekarang (target bergerak selalu lolos)
+   * 1 = bidikan sempurna (tidak pernah meleset, gunanya proyektil hilang)
+   */
+  leadFactor: 0.45,
+  /**
+   * Sebaran bidikan dalam radian.
+   *
+   * Ini pengendali utama tingkat meleset — bukan `leadFactor`. Diukur di
+   * simulasi: mengubah leadFactor dari 0.62 ke 0.0 hanya menggeser tingkat
+   * kena dari 91.4% ke 89.6%, karena pada jarak tempur biasa waktu terbang
+   * panah cuma ~0.17 detik dan target tidak sempat menyingkir. Sudut simpangan
+   * bekerja terlepas dari jarak, jadi jauh lebih bisa disetel.
+   */
+  spread: 0.3,
+  /** Proyektil boleh terbang sedikit melewati jangkauan nominal. */
+  rangeMultiplier: 1.15,
+  /**
+   * Evasion dihitung separuh terhadap proyektil.
+   * Alasannya: proyektil sudah bisa meleset secara fisik. Menerapkan evasion
+   * penuh di atasnya berarti menghukum busur dua kali untuk hal yang sama.
+   */
+  evasionScale: 0.5,
+  /** Damage proyektil ke batu yang tertancap. */
+  obstacleDamage: 9,
+};
+
 export const STEERING = {
   /** Gaya dorong maksimum yang bisa dikeluarkan AI (unit/detik^2). */
   maxForce: 900,
@@ -180,16 +215,46 @@ export const COMBAT = {
 
 export const AI = {
   /**
-   * Ambang HP untuk kabur, diturunkan dari `courage`.
-   * courage 0   -> kabur di bawah 38% HP
-   * courage 1   -> praktis tidak pernah kabur
+   * Ambang HP untuk MEMPERTIMBANGKAN kabur. Ini cuma gerbang pertama —
+   * keputusan sebenarnya dibuat lewat perbandingan siapa mati duluan.
    *
-   * Angkanya sengaja tidak tinggi. Saat diuji di 0.55, mode battle royale
-   * dimenangkan oleh siapa pun yang paling penakut: semua orang kabur di
-   * separuh HP, nyaris tidak ada yang mati, dan match selalu berakhir di
-   * sudden death. Kabur harus menunda kekalahan, bukan menjadi strategi menang.
+   * courage 0   -> mulai mempertimbangkan di bawah 38% HP
+   * courage 1   -> praktis tidak pernah
    */
   fleeThreshold: (courage) => 0.38 * (1 - courage),
+
+  /**
+   * Margin "aku kalah balapan".
+   *
+   * Kabur baru dipilih kalau waktu-sampai-aku-mati lebih pendek dari
+   * waktu-sampai-dia-mati DIKALI margin ini. Petarung pemberani butuh selisih
+   * yang jauh lebih meyakinkan sebelum mundur.
+   *
+   * Ini inti perbaikan atas bug "dua-duanya kabur". Ambang HP absolut
+   * memerintahkan KEDUA petarung sekarat untuk lari, dan pertarungan membeku —
+   * terukur 19.2% waktu petarung habis untuk kabur, dengan 118 detik (dari 200
+   * match) di mana semua yang hidup kabur bersamaan.
+   *
+   * Perbandingan balapan tidak bisa membeku, karena secara definisi hanya
+   * salah satu pihak yang bisa kalah balapan.
+   */
+  fleeMargin: (courage) => 0.9 - courage * 0.45,
+
+  /**
+   * Kalau musuh lebih cepat dari ini (relatif terhadap kecepatan kita),
+   * kabur cuma berarti mati kelelahan. Lebih baik berbalik dan melawan.
+   *
+   * Efek sampingnya bagus: kejar-kejaran panjang antara yang lambat dan yang
+   * cepat — pemandangan paling membosankan di arena — jadi hilang sendiri.
+   */
+  escapeSpeedRatio: 0.95,
+
+  /** Kabur maksimal sekian detik sebelum dipaksa berbalik melawan. */
+  maxFleeDuration: 3.2,
+  /** Setelah berhenti kabur, tidak boleh kabur lagi selama ini. */
+  fleeCooldown: 2.5,
+  /** Ancaman yang lebih jauh dari ini tidak layak dikaburi. */
+  fleeThreatRange: 260,
   /** Seberapa lama target dipertahankan sebelum boleh ganti (detik). */
   targetStickiness: 1.4,
   /** Bonus skor untuk target yang sudah sekarat (fokus api). */

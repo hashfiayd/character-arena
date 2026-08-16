@@ -6,10 +6,11 @@
  * menambah EFFECT_ID baru tapi lupa file ini, efeknya tidak akan terjadi.
  */
 
-import { COMBAT, FighterState, OBSTACLE, PHYSICS } from './constants.js';
+import { COMBAT, FighterState, OBSTACLE, PHYSICS, PROJECTILE } from './constants.js';
 import { EFFECT_IDS } from '../data/pools.js';
 import { applyImpulse } from './physics.js';
 import { hasLineOfSight, damageObstacle } from './obstacles.js';
+import { spawnProjectile } from './projectiles.js';
 import { hpRatio, isAlive, isEnemy } from './fighter.js';
 import * as V from '../lib/vec.js';
 
@@ -19,6 +20,9 @@ export function updateTimers(fighter, dt) {
   fighter.invulnTimer = Math.max(0, fighter.invulnTimer - dt);
   fighter.hitFlash = Math.max(0, fighter.hitFlash - dt);
   fighter.swingFlash = Math.max(0, fighter.swingFlash - dt);
+  fighter.attackAnim = Math.max(0, fighter.attackAnim - dt);
+  // Deformasi benturan pulih cepat; lebih lambat dari ini terlihat seperti agar-agar.
+  fighter.squash = Math.max(0, fighter.squash - dt * 4.5);
 
   if (fighter.staggerTimer > 0) {
     fighter.staggerTimer = Math.max(0, fighter.staggerTimer - dt);
@@ -118,13 +122,11 @@ export function applyDamage(target, amount, ctx, source = null, kind = 'hit') {
  * mematikan steering (lihat steering.js), fighter yang terpukul benar-benar
  * meluncur mengikuti fisika sebelum bisa mengambil alih arah lagi.
  */
-function applyKnockback(attacker, target, damage) {
-  const dir = V.normalize(V.sub(target.pos, attacker.pos));
-  if (dir.x === 0 && dir.y === 0) return;
+function pushTarget(target, dir, damage, knockbackStat) {
+  if (dir.x === 0 && dir.y === 0) return 0;
 
   let magnitude =
-    (COMBAT.baseKnockback + damage * COMBAT.knockbackPerDamage) *
-    attacker.stats.knockback;
+    (COMBAT.baseKnockback + damage * COMBAT.knockbackPerDamage) * knockbackStat;
 
   if (target.effects.has(EFFECT_IDS.JUGGERNAUT)) {
     magnitude *= COMBAT.juggernautKnockbackTaken;
@@ -136,13 +138,13 @@ function applyKnockback(attacker, target, damage) {
 
   // Tapi JANGAN sentuh `state` kalau target sudah mati.
   //
-  // Bug yang pernah terjadi di sini: `applyKnockback` dipanggil setelah
-  // `applyDamage`, sehingga pukulan mematikan menimpa state DEAD dengan
-  // STAGGERED. Hasilnya petarung ber-HP 0 yang tidak pernah dianggap mati —
-  // pertandingan tidak pernah selesai lewat pertarungan, dan satu-satunya
-  // yang bisa "membunuh" adalah zona. Gejalanya halus: semua senjata terlihat
-  // punya total damage identik (mentok di maxHp lawan).
-  if (!isAlive(target)) return;
+  // Bug yang pernah terjadi di sini: knockback dipanggil setelah `applyDamage`,
+  // sehingga pukulan mematikan menimpa state DEAD dengan STAGGERED. Hasilnya
+  // petarung ber-HP 0 yang tidak pernah dianggap mati — pertandingan tidak
+  // pernah selesai lewat pertarungan, dan satu-satunya yang bisa "membunuh"
+  // adalah zona. Gejalanya halus: semua senjata terlihat punya total damage
+  // identik (mentok di maxHp lawan).
+  if (!isAlive(target)) return magnitude;
 
   const stagger = Math.min(
     COMBAT.maxStagger,
@@ -152,6 +154,14 @@ function applyKnockback(attacker, target, damage) {
     target.staggerTimer = stagger;
     target.state = FighterState.STAGGERED;
   }
+
+  return magnitude;
+}
+
+function applyKnockback(attacker, target, damage) {
+  const dir = V.normalize(V.sub(target.pos, attacker.pos));
+  const magnitude = pushTarget(target, dir, damage, attacker.stats.knockback);
+  if (!magnitude) return;
 
   // Recoil hanya untuk melee — memanah tidak seharusnya mendorong pemanah.
   if (!attacker.ranged) {
@@ -194,8 +204,38 @@ export function tryAttack(attacker, target, ctx) {
     if (!hasLineOfSight(attacker.pos, target.pos, ctx.obstacles)) return false;
   }
 
-  attacker.attackCooldown = 1 / effectiveAttackSpeed(attacker);
+  const cooldown = 1 / effectiveAttackSpeed(attacker);
+  attacker.attackCooldown = cooldown;
+
+  // Durasi animasi mengikuti tempo senjata, dibatasi agar belati bertempo
+  // tinggi tidak menumpuk ayunan yang belum selesai di atas ayunan berikutnya.
+  attacker.attackAnimDuration = Math.min(0.32, cooldown * 0.75);
+  attacker.attackAnim = attacker.attackAnimDuration;
   attacker.swingFlash = 0.14;
+
+  // --- Jalur proyektil ---------------------------------------------------
+  // Busur dan chakram melepas benda yang benar-benar terbang. Damage-nya
+  // dihitung SEKARANG (variance, kritikal, kekuatan penembak) tapi baru
+  // diterapkan kalau nanti mengenai — jadi panah dari pemanah yang keburu
+  // mati tetap melesat dan tetap melukai.
+  if (attacker.usesProjectile) {
+    const variance = 1 + (ctx.rng.next() * 2 - 1) * COMBAT.damageVariance;
+    const critical = ctx.rng.chance(attacker.stats.crit);
+    let raw = attacker.stats.atk * variance;
+    if (critical) raw *= attacker.stats.critMult;
+
+    const projectile = spawnProjectile(
+      attacker,
+      target,
+      { raw, critical, speed: attacker.stats.projectileSpeed },
+      ctx.rng,
+    );
+    if (projectile) {
+      ctx.projectiles.push(projectile);
+      ctx.events.push({ type: 'fire', x: attacker.pos.x, y: attacker.pos.y });
+    }
+    return true;
+  }
 
   ctx.events.push({
     type: attacker.ranged ? 'shot' : 'swing',
@@ -321,12 +361,88 @@ export function applyRamDamage(a, b, impactSpeed, ctx) {
   applyDamage(a, share * (b.mass / total) * 2, ctx, isEnemy(a, b) ? b : null, 'ram');
   applyDamage(b, share * (a.mass / total) * 2, ctx, isEnemy(a, b) ? a : null, 'ram');
 
+  // Squash & stretch: bola dipipihkan sejenak searah benturan. Ini prinsip
+  // animasi klasik dan satu-satunya isyarat visual yang membuat tumbukan
+  // terasa punya bobot, bukan sekadar dua lingkaran bertukar arah.
+  const squash = Math.min(0.42, excess / 700);
+  const angle = Math.atan2(b.pos.y - a.pos.y, b.pos.x - a.pos.x);
+  a.squash = Math.max(a.squash, squash);
+  a.squashAngle = angle;
+  b.squash = Math.max(b.squash, squash);
+  b.squashAngle = angle;
+
   ctx.events.push({
     type: 'impact',
     x: (a.pos.x + b.pos.x) / 2,
     y: (a.pos.y + b.pos.y) / 2,
     strength: Math.min(1, excess / 400),
   });
+}
+
+/**
+ * Proyektil mengenai seorang petarung.
+ *
+ * Evasion tetap berlaku tapi DIPOTONG SEPARUH. Alasannya: proyektil sudah bisa
+ * meleset secara fisik karena target bergerak. Menerapkan evasion penuh di
+ * atasnya berarti menghukum busur dua kali untuk hal yang sama, dan membuat
+ * senjata proyektil selalu kalah dari yang hitscan.
+ */
+export function resolveProjectileHit(projectile, target, ctx) {
+  if (ctx.rng.chance(target.stats.evasion * PROJECTILE.evasionScale)) {
+    ctx.events.push({
+      type: 'miss',
+      x: target.pos.x,
+      y: target.pos.y - target.radius - 6,
+      source: 'projectile',
+    });
+    return;
+  }
+
+  // Falloff dihitung dari jarak yang BENAR-BENAR ditempuh proyektil, bukan
+  // dari jarak saat dilepas — panah yang mengejar target menjauh memang
+  // kehilangan tenaga lebih banyak.
+  const ratio = projectile.range > 0 ? projectile.traveled / projectile.range : 0;
+  const { startRatio, minMultiplier } = COMBAT.rangedFalloff;
+  const t = Math.max(0, Math.min(1, (ratio - startRatio) / (1 - startRatio)));
+  const falloff = 1 + (minMultiplier - 1) * t;
+
+  const mitigation = 100 / (100 + target.stats.def);
+  const dealt = applyDamage(target, projectile.raw * falloff * mitigation, ctx, null, 'projectile');
+
+  ctx.events.push({
+    type: 'damage',
+    x: target.pos.x,
+    y: target.pos.y - target.radius - 4,
+    amount: Math.round(dealt),
+    critical: projectile.critical,
+    color: projectile.color,
+    source: 'projectile',
+  });
+
+  // Dorongan mengikuti arah terbang proyektil, bukan arah dari penembak —
+  // penembaknya bisa saja sudah pindah, atau sudah mati.
+  pushTarget(target, V.normalize(projectile.vel), dealt, projectile.knockback);
+  target.invulnTimer = COMBAT.invulnAfterHit;
+
+  if (target.effects.has(EFFECT_IDS.THORNS)) {
+    // Tidak ada yang bisa dipantuli: pemanahnya jauh, dan bisa jadi sudah
+    // tidak ada. Duri hanya bekerja terhadap yang berani mendekat.
+  }
+}
+
+/** Proyektil menancap di batu. */
+export function resolveProjectileObstacle(projectile, obstacle, ctx) {
+  const shattered = damageObstacle(obstacle, PROJECTILE.obstacleDamage);
+  ctx.events.push({
+    type: shattered ? 'rockShatter' : 'rockHit',
+    x: obstacle.pos.x,
+    y: obstacle.pos.y,
+    radius: obstacle.radius,
+    hitX: projectile.pos.x,
+    hitY: projectile.pos.y,
+    strength: 0.35,
+  });
+  if (shattered) ctx.log('Sebuah batu hancur berkeping.');
 }
 
 /**
@@ -345,6 +461,12 @@ export function applyRockImpact(fighter, obstacle, impactSpeed, ctx) {
   if (excess <= 0) return;
 
   applyDamage(fighter, excess * OBSTACLE.fighterDamageFactor, ctx, null, 'rock');
+
+  fighter.squash = Math.max(fighter.squash, Math.min(0.45, excess / 600));
+  fighter.squashAngle = Math.atan2(
+    obstacle.pos.y - fighter.pos.y,
+    obstacle.pos.x - fighter.pos.x,
+  );
 
   const shattered = damageObstacle(obstacle, excess * OBSTACLE.rockDamageFactor);
 

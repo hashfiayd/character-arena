@@ -2,7 +2,8 @@
 
 Spinwheel untuk merakit karakter fantasy RPG, lalu mengadu mereka sebagai bola
 berfisika di arena — dengan knockback, kabur, kiting, tumbukan antar bola,
-dan batu penghalang yang bisa dihancurkan.
+batu penghalang yang bisa dihancurkan, proyektil yang benar-benar terbang,
+serta SFX dan musik yang seluruhnya dibangkitkan kode.
 
 Sepuluh putaran membentuk satu karakter: Ras, Kelas, empat atribut bertingkat,
 lalu Senjata, Zirah, Sifat, dan Berkah. Ras dan Kelas tidak cuma memberi stat —
@@ -41,12 +42,20 @@ src/
 │  ├─ steering.js      AI: seek / kite / orbit / flee / separation / zone / batu
 │  ├─ physics.js       Integrasi, tumbukan berbasis impuls, pantulan dinding
 │  ├─ obstacles.js     Batu: pembangkitan, tumbukan statis, garis pandang
+│  ├─ projectiles.js   Panah & chakram yang terbang dan bisa meleset
 │  ├─ combat.js        Damage, knockback, stagger, efek boon, LOS
 │  └─ simulation.js    Orkestrator + kondisi menang + zona menyusut
 │
 ├─ storage/         Satu-satunya yang menyentuh localStorage
 ├─ hooks/           Jembatan React <-> domain
+├─ audio/           Sintesis Web Audio. Tidak ada satu pun file suara.
+│  ├─ synth.js        Primitif: osilator ber-amplop, semburan noise, akor
+│  ├─ AudioEngine.js  Bus, pembatasan laju, BGM prosedural, unlock autoplay
+│  ├─ battleAudio.js  Penerjemah event engine -> bunyi
+│  └─ useAudio.js     Jembatan ke React + penyimpanan pengaturan
+│
 ├─ features/        UI per fitur (spinwheel, roster, arena)
+│  └─ arena/gearArt.js  Bentuk vektor tiap senjata & zirah + animasi seranganya
 ├─ ui/              Primitif visual
 └─ lib/             Vektor 2D, seeded RNG
 ```
@@ -129,6 +138,103 @@ bug bola nyangkut di sudut cekung.
 
 ---
 
+## Busur versus tongkat sihir
+
+Keduanya senjata jarak jauh, tapi berbeda secara **mekanik**, bukan cuma angka:
+
+| | Longbow / Chakram | Arcane Staff |
+|---|---|---|
+| Cara kerja | Proyektil yang benar-benar terbang | Hitscan — mengunci sasaran |
+| Bisa meleset | Ya (~26% dari tembakan) | Tidak pernah |
+| Tempo | Cepat | Lambat |
+| Terhalang musuh/batu | Ya | Tidak (tapi butuh garis pandang saat menembak) |
+
+Cara mengatur tingkat meleset ternyata berlawanan dengan dugaan. Pengendali
+yang tampak jelas — `leadFactor`, seberapa jauh penembak mengantisipasi gerak
+target — nyaris tidak berpengaruh: mengubahnya dari 0.62 ke 0.0 hanya menggeser
+tingkat kena dari 91.4% ke 89.6%. Sebabnya, pada jarak tempur biasa waktu
+terbang panah cuma ~0.17 detik dan target tidak sempat menyingkir sejauh
+radiusnya sendiri.
+
+Yang benar-benar bekerja adalah `PROJECTILE.spread`, simpangan sudut bidikan,
+karena efeknya tidak bergantung jarak:
+
+```
+spread 0.10  -> 89.3% kena
+spread 0.16  -> 89.6% kena
+spread 0.24  -> 81.9% kena
+spread 0.32  -> 72.2% kena     <- dipakai
+```
+
+Rincian nasib proyektil pada setelan sekarang: 73.6% kena target, 17.0% meleset
+total, 4.8% dielakkan (evasion), 4.6% menancap di batu.
+
+Panah menembus rekan setim tapi terhalang musuh pertama. Itu keputusan desain,
+bukan keterbatasan: di mode tim, kalah karena panah rekan sendiri terasa seperti
+dicurangi, bukan seperti kesalahan yang bisa dipelajari.
+
+---
+
+## Tampilan bola dan kehalusan gerak
+
+Setiap bola menggambarkan perlengkapannya. Senjatanya bukan ikon tempel — ia
+menghadap ke target dan beranimasi sesuai jenisnya: pedang dan kapak mengayun
+dengan kurva percepatan, tombak menusuk lurus, belati menusuk bergantian, busur
+menarik tali lalu melepas, tongkat mengumpulkan cahaya yang membesar, chakram
+berputar. Zirah jadi cincin dengan karakter berbeda — pelat bersambungan, rantai
+putus-putus, rune berputar pelan — dan "Tanpa Zirah" memang tidak menggambar
+apa pun, karena ketiadaan itu sendiri informasi.
+
+Semuanya vektor Canvas, tidak ada sprite. Konsekuensinya animasi adalah fungsi
+waktu, bukan pilihan frame — jadi durasi ayunan bisa mengikuti tempo senjata
+secara otomatis.
+
+Tiga hal yang membuat gerakannya lebih halus:
+
+1. **Interpolasi antar langkah fisika.** Simulasi tetap dikunci di 60 langkah
+   per detik demi determinisme, tapi renderer menggambar di posisi antara dua
+   langkah. Tanpa ini, layar 120/144Hz menampilkan langkah yang sama dua kali
+   lalu melompat — getaran halus yang sulit ditunjuk penyebabnya tapi membuat
+   gerakan terasa murah.
+2. **Bola berguling.** Sudut guling diakumulasi dari jarak tempuh dibagi
+   keliling, persis seperti roda. Tanpa ini bola meluncur seperti mengambang.
+3. **Squash & stretch.** Benturan keras memipihkan bola tegak lurus arah
+   tumbukan. Prinsip animasi klasik, dan satu-satunya isyarat yang membuat
+   tumbukan terasa punya bobot alih-alih sekadar bertukar arah.
+
+---
+
+## Audio
+
+Tidak ada satu pun file suara di project ini. Semua dibangkitkan Web Audio API.
+Trade-off-nya perlu disebut terus terang:
+
+- **Untung**: ukuran project tetap kecil, tidak ada urusan lisensi aset, dan
+  tiap bunyi bisa disetel lewat angka persis seperti balance.
+- **Rugi**: karakternya retro/sintetik. Ini tidak akan pernah terdengar seperti
+  rekaman pedang sungguhan, dan tidak ada parameter yang bisa mengubah itu.
+  Kalau kamu ingin suara asli, `AudioEngine.play()` adalah satu-satunya tempat
+  yang perlu diganti.
+
+Tiga hal yang membuatnya lebih rumit dari sekadar "mainkan bunyi":
+
+1. **Kebijakan autoplay.** Browser menolak membuat suara sebelum ada interaksi.
+   AudioContext karena itu dibuat malas, pada klik pertama di mana pun. Membuat
+   context lebih awal menghasilkan state `suspended` yang diam-diam bisu.
+2. **Pembatasan laju.** Enam bola bertarung bisa memicu belasan event `damage`
+   per detik. Renderer senang menggambar semuanya; audio harus membuang
+   sebagian besar, atau hasilnya bukan terdengar ramai tapi terdengar rusak.
+3. **Aman headless.** `npm run sim` jalan di Node tanpa Web Audio sama sekali,
+   jadi semua jalur audio harus no-op tanpa penjagaan di sisi pemanggil.
+
+Diverifikasi lewat browser: sebelum ada klik, nol AudioContext dibuat. Setelah
+klik, satu context dengan state `running`. Setelah satu putaran roda, 28 sumber
+noise (bunyi tik) dan 2 osilator. Setelah enam detik bertarung, 37 osilator dan
+49 semburan noise. Saat di-mute, **nol** node baru — musiknya benar-benar
+dihentikan, bukan sekadar dikecilkan ke volume nol.
+
+---
+
 ## Bagaimana gerakannya dibuat "hidup"
 
 ### Steering, bukan pathfinding
@@ -166,6 +272,43 @@ dari satu rumus tumbukan lenting sebagian yang sama:
 ```
 j = -(1 + restitution) * v_relatif_normal / (1/m1 + 1/m2)
 ```
+
+---
+
+## Kabur: kenapa dua petarung sekarat pernah saling menghindar
+
+Versi awal memakai aturan paling jelas: "HP di bawah X persen, lari." Aturan itu
+punya kebuntuan yang langsung terlihat begitu dimainkan — dua petarung sekarat
+sama-sama diperintahkan lari, tidak ada yang menyerang, dan pertandingan membeku
+sampai zona menghabisi keduanya. Terukur di 200 match:
+
+```
+                        sebelum   sesudah
+waktu dihabiskan kabur    19.2%      4.6%
+step "SEMUA kabur"         7088         0
+durasi rata-rata          20.2s     15.1s
+```
+
+Perbaikannya bukan "yang HP-nya lebih rendah yang kabur", meski itu memang
+menghilangkan kebuntuan. Masalahnya, HP saja menyesatkan: Berserker ber-HP 30
+dengan 80 DPS melawan Cleric ber-HP 60 dengan 15 DPS akan diperintahkan kabur
+oleh perbandingan HP — padahal ia membunuh dalam 0.8 detik dan baru mati dalam
+4 detik.
+
+Jadi pertanyaannya diganti menjadi **"apakah aku akan mati duluan?"**:
+
+```
+waktuAkuMati  = hp_ku    / dps_lawan_setelah_mitigasi
+waktuDiaMati  = hp_lawan / dps_ku_setelah_mitigasi
+kabur         = waktuAkuMati < waktuDiaMati * margin(courage)
+```
+
+Perbandingan ini tidak bisa membeku, karena secara definisi hanya satu pihak
+yang bisa kalah balapan. Dua pengaman melengkapinya:
+
+- **Tidak bisa lari dari yang lebih cepat -> berbalik melawan.** Sekaligus
+  menghapus kejar-kejaran panjang yang jadi tontonan paling membosankan.
+- **Kabur punya batas waktu dan jeda**, jadi tidak ada yang lari selamanya.
 
 ---
 
@@ -246,6 +389,8 @@ berpengaruh:
 | `ZONE.*`                       | Tekanan yang memaksa pertarungan terjadi          |
 | `OBSTACLE.countRange`          | Padat-jarangnya batu — makin padat, makin lemah ranged |
 | `OBSTACLE.fighterDamageFactor` | Damage saat terlempar ke batu                     |
+| `PROJECTILE.spread`            | Tingkat meleset panah (pengendali utama)          |
+| `PROJECTILE.leadFactor`        | Antisipasi gerak target — pengaruhnya kecil       |
 
 Untuk bias roda, angka-angkanya ada di `data/pools.js` (`affinity`, `gearBias`)
 dan kekuatan pergeserannya di `domain/weights.js` (`TIER_BIAS`).

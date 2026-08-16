@@ -31,7 +31,24 @@ export function createFighter(hydrated, placement) {
     radius: hydrated.radius,
     mass: stats.mass,
     ranged: isRanged(stats),
+    /**
+     * Busur/chakram melempar proyektil; tongkat sihir mengunci sasaran.
+     * Dibaca sekali di sini supaya jalur panas combat.js tidak perlu
+     * membandingkan angka tiap serangan.
+     */
+    usesProjectile: stats.projectileSpeed > 0,
     preferredDist: preferredDistance(stats),
+
+    /**
+     * Damage mentah per detik, sebelum mitigasi lawan.
+     * Dihitung sekali karena AI memakainya tiap frame untuk menaksir
+     * "siapa yang mati duluan" (lihat steering.js).
+     */
+    rawDps: stats.atk * stats.attackSpeed,
+
+    /** Id perlengkapan — dipakai renderer untuk menggambar senjata & zirah. */
+    weaponId: hydrated.gear?.weapon ?? null,
+    armorId: hydrated.gear?.armor ?? null,
 
     pos: { x: placement.x, y: placement.y },
     vel: { x: 0, y: 0 },
@@ -49,6 +66,24 @@ export function createFighter(hydrated, placement) {
     hitFlash: 0,
     /** Timer visual: kilatan saat melancarkan serangan. */
     swingFlash: 0,
+
+    /** Berapa lama sudah kabur, dan jeda sebelum boleh kabur lagi. */
+    fleeTimer: 0,
+    fleeCooldown: 0,
+
+    /** Arah hadap (radian) — dipakai renderer untuk mengarahkan senjata. */
+    aimAngle: 0,
+    /** Timer animasi serang: 1 -> 0 selama satu ayunan/tembakan. */
+    attackAnim: 0,
+    attackAnimDuration: 0.25,
+
+    /** Sudut guling bola, diakumulasi dari jarak tempuh. */
+    roll: 0,
+    /** Posisi langkah fisika sebelumnya — untuk interpolasi saat render. */
+    prevPos: { x: placement.x, y: placement.y },
+    /** Deformasi squash & stretch saat benturan keras. */
+    squash: 0,
+    squashAngle: 0,
 
     targetId: null,
     targetTimer: 0,

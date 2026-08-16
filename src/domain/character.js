@@ -104,6 +104,9 @@ export function hydrateCharacter(character) {
     options,
     stats,
     effects,
+    // Peta slot -> id pilihan, supaya renderer bisa tahu senjata & zirah apa
+    // yang harus digambar tanpa perlu menelusuri `options` tiap frame.
+    gear: character.picks,
     radius: radiusFromMass(stats.mass),
     power: powerScore(stats),
   };

@@ -254,20 +254,114 @@ function flee(fighter, fighters) {
   return steerTowards(fighter, dir, 0.92);
 }
 
-/**
- * Menentukan apakah fighter sedang kabur.
- * Memakai HISTERESIS: ambang keluar lebih tinggi dari ambang masuk, supaya
- * fighter yang HP-nya tepat di batas tidak bolak-balik lari-balik-lari.
- */
-function updateFleeState(fighter) {
-  const threshold = AI.fleeThreshold(fighter.stats.courage);
-  const ratio = hpRatio(fighter);
-
-  if (fighter.state === FighterState.FLEEING) {
-    if (ratio > threshold + 0.12) fighter.state = FighterState.ACTIVE;
-  } else if (fighter.state === FighterState.ACTIVE && ratio < threshold) {
-    fighter.state = FighterState.FLEEING;
+/** Ancaman terdekat yang masih hidup dan bermusuhan. */
+function nearestThreat(fighter, fighters) {
+  let nearest = null;
+  let nearestD = Infinity;
+  for (const other of fighters.values()) {
+    if (other === fighter || !isAlive(other) || !isEnemy(fighter, other)) continue;
+    const d = V.dist(fighter.pos, other.pos);
+    if (d < nearestD) {
+      nearestD = d;
+      nearest = other;
+    }
   }
+  return { threat: nearest, distance: nearestD };
+}
+
+/**
+ * Perkiraan detik sampai `target` tumbang oleh `attacker`.
+ * Kasar — mengabaikan regen, kritikal, dan waktu tempuh — tapi cukup untuk
+ * membandingkan dua sisi dengan rumus yang sama.
+ */
+function timeToKill(attacker, target) {
+  const mitigation = 100 / (100 + target.stats.def);
+  const dps = attacker.rawDps * mitigation;
+  return dps > 0.001 ? target.hp / dps : Infinity;
+}
+
+/**
+ * Keputusan kabur.
+ *
+ * Versi lama memakai ambang HP absolut: "HP di bawah X persen, lari." Itu
+ * menghasilkan kebuntuan yang jelas begitu terlihat — dua petarung sekarat
+ * sama-sama diperintahkan lari, tidak ada yang menyerang, dan pertandingan
+ * membeku sampai zona menghabisi keduanya. Terukur: 19.2% waktu petarung
+ * habis untuk kabur, dengan 118 detik (dari 200 match) di mana SEMUA yang
+ * hidup kabur bersamaan.
+ *
+ * Sekarang pertanyaannya bukan "apakah HP-ku rendah" melainkan
+ * "APAKAH AKU AKAN MATI DULUAN". Perbandingan itu tidak bisa membeku, karena
+ * secara definisi hanya satu pihak yang bisa kalah balapan.
+ *
+ * Kenapa bukan sekadar membandingkan HP (yang lebih rendah kabur)?
+ * Karena HP saja menyesatkan. Berserker ber-HP 30 dengan 80 DPS melawan
+ * Cleric ber-HP 60 dengan 15 DPS akan diperintahkan kabur oleh perbandingan
+ * HP — padahal ia membunuh dalam 0.8 detik dan baru mati dalam 4 detik.
+ * Ia seharusnya menyerang, dan perbandingan balapan memberitahu itu.
+ *
+ * Dua pengaman tambahan:
+ *   - Tidak bisa lari dari yang lebih cepat -> berbalik melawan (last stand).
+ *     Ini sekaligus menghapus kejar-kejaran panjang yang membosankan.
+ *   - Kabur punya batas waktu dan jeda, jadi tidak ada yang lari selamanya.
+ */
+function updateFleeState(fighter, fighters, dt) {
+  fighter.fleeCooldown = Math.max(0, fighter.fleeCooldown - dt);
+
+  const wasFleeing = fighter.state === FighterState.FLEEING;
+
+  if (wasFleeing) {
+    fighter.fleeTimer += dt;
+    if (fighter.fleeTimer > AI.maxFleeDuration) {
+      fighter.state = FighterState.ACTIVE;
+      fighter.fleeTimer = 0;
+      fighter.fleeCooldown = AI.fleeCooldown;
+      return false;
+    }
+  }
+
+  const ratio = hpRatio(fighter);
+  // Histeresis: sudah terlanjur kabur boleh bertahan sedikit lebih lama.
+  const threshold =
+    AI.fleeThreshold(fighter.stats.courage) + (wasFleeing ? 0.12 : 0);
+
+  if (ratio > threshold || (!wasFleeing && fighter.fleeCooldown > 0)) {
+    if (wasFleeing) {
+      fighter.state = FighterState.ACTIVE;
+      fighter.fleeTimer = 0;
+    }
+    return false;
+  }
+
+  const { threat, distance } = nearestThreat(fighter, fighters);
+
+  // Tidak ada yang mengancam, atau ancamannya masih jauh: tidak perlu lari.
+  if (!threat || distance > AI.fleeThreatRange) {
+    if (wasFleeing) {
+      fighter.state = FighterState.ACTIVE;
+      fighter.fleeTimer = 0;
+    }
+    return false;
+  }
+
+  const myTimeLeft = timeToKill(threat, fighter);
+  const hisTimeLeft = timeToKill(fighter, threat);
+  const losingRace = myTimeLeft < hisTimeLeft * AI.fleeMargin(fighter.stats.courage);
+
+  const canEscape =
+    fighter.stats.spd > threat.stats.spd * AI.escapeSpeedRatio;
+
+  const shouldFlee = losingRace && canEscape;
+
+  if (shouldFlee && !wasFleeing) {
+    fighter.state = FighterState.FLEEING;
+    fighter.fleeTimer = 0;
+  } else if (!shouldFlee && wasFleeing) {
+    fighter.state = FighterState.ACTIVE;
+    fighter.fleeTimer = 0;
+    fighter.fleeCooldown = AI.fleeCooldown;
+  }
+
   return fighter.state === FighterState.FLEEING;
 }
 
@@ -345,7 +439,7 @@ export function computeSteering(fighter, fighters, rng, dt, world = {}) {
 
   const { zone, obstacles } = world;
   const target = selectTarget(fighter, fighters, dt);
-  const fleeing = updateFleeState(fighter);
+  const fleeing = updateFleeState(fighter, fighters, dt);
 
   // Cek garis pandang hanya untuk yang memang butuh: petarung ranged yang
   // sedang menyerang. Melee tidak peduli, dan yang sedang kabur juga tidak.
@@ -375,6 +469,18 @@ export function computeSteering(fighter, fighters, rng, dt, world = {}) {
   if (obstacles?.length) {
     const rock = obstacleAvoidance(fighter, obstacles);
     if (rock) applyForce(fighter, rock, W.obstacle);
+  }
+
+  // Arah hadap: ke target kalau ada, kalau tidak ke arah gerak. Dipakai
+  // renderer untuk mengarahkan senjata — tanpa ini pedang menghadap ke arah
+  // acak dan langsung terbaca sebagai salah.
+  if (target) {
+    fighter.aimAngle = Math.atan2(
+      target.pos.y - fighter.pos.y,
+      target.pos.x - fighter.pos.x,
+    );
+  } else if (Math.hypot(fighter.vel.x, fighter.vel.y) > 8) {
+    fighter.aimAngle = Math.atan2(fighter.vel.y, fighter.vel.x);
   }
 
   if (zone) {

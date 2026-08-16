@@ -34,9 +34,12 @@ import {
   applyDamage,
   applyRamDamage,
   applyRockImpact,
+  resolveProjectileHit,
+  resolveProjectileObstacle,
   tryAttack,
 } from './combat.js';
 import { createObstacles, resolveObstacleCollisions } from './obstacles.js';
+import { updateProjectiles } from './projectiles.js';
 import { hydrateCharacter, TEAM_COLORS } from '../domain/character.js';
 import { createRng, hashSeed } from '../lib/rng.js';
 
@@ -118,11 +121,15 @@ export class BattleSimulation {
     this.obstacles = createObstacles(this.rng, spawns);
     this.world.obstacles = this.obstacles;
 
+    /** Proyektil yang sedang terbang. Dimutasi di tempat tiap step. */
+    this.projectiles = [];
+
     this.ctx = {
       rng: this.rng,
       events: this.events,
       time: 0,
       obstacles: this.obstacles,
+      projectiles: this.projectiles,
       log: (text) => this._pushLog(text),
     };
 
@@ -191,6 +198,13 @@ export class BattleSimulation {
       const target = targets.get(f.id);
       if (target && isAlive(target)) tryAttack(f, target, this.ctx);
     }
+
+    // Proyektil dimajukan SETELAH semua bola selesai bergerak, supaya
+    // pengecekan tabrakan memakai posisi akhir — bukan posisi setengah jalan.
+    updateProjectiles(this.projectiles, this.list, this.obstacles, dt, {
+      onFighterHit: (p, f) => resolveProjectileHit(p, f, this.ctx),
+      onObstacleHit: (p, o) => resolveProjectileObstacle(p, o, this.ctx),
+    });
 
     applyBurnAuras(this.list, this.ctx, dt);
     for (const f of this.list) applyRegen(f, dt);

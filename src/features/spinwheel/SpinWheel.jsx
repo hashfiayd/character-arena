@@ -25,7 +25,15 @@ import { weightsToProbabilities } from '../../domain/weights.js';
 const VIEWBOX = 220;
 const CENTER = VIEWBOX / 2;
 const RADIUS = 104;
-const LABEL_RADIUS = 70;
+/**
+ * Jangkar dalam untuk label. Harus di LUAR hub.
+ *
+ * Hub adalah elemen HTML terpisah yang menimpa SVG (inset 33% dari lebar
+ * wadah), jadi radiusnya dalam satuan SVG sekitar 37. Angka 46 menyisakan
+ * ruang aman — pada 40, label panjang seperti "Juggernaut" ujungnya tertimpa
+ * hub dan huruf terakhirnya hilang.
+ */
+const LABEL_INNER = 46;
 /** Hub menutupi bagian tengah; label tidak boleh masuk ke sini. */
 const HUB_RADIUS = 30;
 /** Di bawah lebar ini, label tidak muat dan malah jadi noise. */
@@ -33,14 +41,39 @@ const MIN_LABEL_SWEEP = 13;
 const FULL_TURNS = 5;
 const SPIN_SECONDS = 4.2;
 
-/** Mencampur warna hex dengan hitam/putih. `amount` > 0 = lebih terang. */
-function shade(hex, amount) {
+/** Hue dasar (0-360) dari warna aksen slot. */
+function hueOf(hex) {
   const n = parseInt(hex.slice(1), 16);
-  const mix = (channel) =>
-    Math.round(
-      amount >= 0 ? channel + (255 - channel) * amount : channel * (1 + amount),
-    );
-  return `rgb(${mix((n >> 16) & 255)} ${mix((n >> 8) & 255)} ${mix(n & 255)})`;
+  const r = ((n >> 16) & 255) / 255;
+  const g = ((n >> 8) & 255) / 255;
+  const b = (n & 255) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  if (d === 0) return 0;
+  let h;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  return (h * 60 + 360) % 360;
+}
+
+/**
+ * Warna potongan: hue berputar sepanjang lingkaran, mengelilingi hue slot.
+ *
+ * Roda satu warna dengan dua tingkat kecerahan (versi sebelumnya) membuat
+ * potongan bersebelahan sulit dibedakan begitu rodanya berputar cepat —
+ * matanya kehilangan jejak. Rentang hue memberi tiap potongan identitas
+ * sendiri, sambil tetap terbaca sebagai satu keluarga karena berpusat di hue
+ * slot yang bersangkutan.
+ */
+function segmentFill(accent, index, total) {
+  const base = hueOf(accent);
+  const spread = 150;
+  const t = total > 1 ? index / (total - 1) : 0.5;
+  const hue = (base + (t - 0.5) * spread + 360) % 360;
+  const light = 34 + (index % 2) * 8;
+  return `hsl(${hue.toFixed(1)} 62% ${light}%)`;
 }
 
 function polar(angleDeg, radius) {
@@ -57,10 +90,11 @@ function polar(angleDeg, radius) {
  * radial (tepi hub ke tepi roda) dan tangensial (lebar potongan).
  */
 function labelFontSize(label, sweepDeg) {
-  const radialRoom = (RADIUS - HUB_RADIUS - 8) * 2;
-  const byLength = radialRoom / Math.max(label.length, 1) / 0.58;
-  const tangentialRoom = (sweepDeg / 360) * 2 * Math.PI * LABEL_RADIUS;
-  return Math.max(7, Math.min(11.5, byLength, tangentialRoom * 0.7));
+  const radialRoom = RADIUS - LABEL_INNER - 6;
+  const byLength = radialRoom / Math.max(label.length, 1) / 0.55;
+  // Lebar tangensial diukur di tengah panjang teks, bukan di tepi roda.
+  const tangentialRoom = (sweepDeg / 360) * 2 * Math.PI * (LABEL_INNER + radialRoom / 2);
+  return Math.max(6.5, Math.min(12, byLength, tangentialRoom * 0.78));
 }
 
 function segmentPath(startDeg, sweepDeg) {
@@ -84,12 +118,13 @@ function segmentPath(startDeg, sweepDeg) {
  * @param {(option: Object, index: number) => void} props.onSettle
  * @param {boolean} [props.disabled]
  */
-export function SpinWheel({ slot, weights, pickIndex, onSettle, disabled }) {
+export function SpinWheel({ slot, weights, pickIndex, onSettle, disabled, audio }) {
   const [rotation, setRotation] = useState(0);
   const [spinning, setSpinning] = useState(false);
   const [landed, setLanded] = useState(null);
   const pendingIndex = useRef(null);
   const discRef = useRef(null);
+  const tickTimer = useRef(null);
 
   // Reset saat slot berganti, kalau tidak roda "meneruskan" sudut slot lama.
   useEffect(() => {
@@ -97,7 +132,36 @@ export function SpinWheel({ slot, weights, pickIndex, onSettle, disabled }) {
     setSpinning(false);
     setLanded(null);
     pendingIndex.current = null;
+    clearTimeout(tickTimer.current);
   }, [slot.id]);
+
+  useEffect(() => () => clearTimeout(tickTimer.current), []);
+
+  /**
+   * Bunyi "tik" mengikuti perlambatan roda.
+   *
+   * Jadwalnya dihitung dari kurva `1 - (1-u)^3`, yang mendekati easing
+   * cubic-bezier pada animasi CSS-nya. Menjadwalkan tik dengan jarak seragam
+   * akan terdengar salah justru karena rodanya terlihat melambat — telinga
+   * langsung menangkap ketidakcocokan itu meski matanya tidak.
+   */
+  const scheduleTicks = useCallback(() => {
+    if (!audio) return;
+    const TOTAL = 34;
+    const durationMs = SPIN_SECONDS * 1000;
+    const timeAt = (i) => durationMs * (1 - Math.pow(1 - i / TOTAL, 3));
+
+    let i = 0;
+    const next = () => {
+      if (i >= TOTAL) return;
+      audio.play('tick');
+      const current = timeAt(i);
+      i += 1;
+      const delay = Math.max(16, timeAt(i) - current);
+      tickTimer.current = setTimeout(next, delay);
+    };
+    next();
+  }, [audio]);
 
   const segments = useMemo(() => {
     const total = weights.reduce((sum, w) => sum + w, 0) || 1;
@@ -119,6 +183,7 @@ export function SpinWheel({ slot, weights, pickIndex, onSettle, disabled }) {
     pendingIndex.current = index;
     setLanded(null);
     setSpinning(true);
+    scheduleTicks();
 
     const target = -90 - segments[index].mid;
 
@@ -128,18 +193,20 @@ export function SpinWheel({ slot, weights, pickIndex, onSettle, disabled }) {
       const delta = (((target - current) % 360) + 360) % 360;
       return current + FULL_TURNS * 360 + delta;
     });
-  }, [disabled, pickIndex, segments, spinning]);
+  }, [disabled, pickIndex, scheduleTicks, segments, spinning]);
 
   const handleTransitionEnd = useCallback(
     (event) => {
       if (event.target !== discRef.current || pendingIndex.current === null) return;
       const index = pendingIndex.current;
       pendingIndex.current = null;
+      clearTimeout(tickTimer.current);
       setSpinning(false);
       setLanded(index);
+      audio?.play('land');
       onSettle?.(slot.options[index], index);
     },
-    [onSettle, slot.options],
+    [audio, onSettle, slot.options],
   );
 
   const landedOption = landed !== null ? slot.options[landed] : null;
@@ -167,18 +234,26 @@ export function SpinWheel({ slot, weights, pickIndex, onSettle, disabled }) {
           aria-label={`Roda ${slot.label}`}
         >
           {segments.map(({ option, index, start, sweep, mid }) => {
-            const labelPos = polar(mid, LABEL_RADIUS);
-            // Balik teks di sisi kiri roda supaya tidak terbaca terbalik.
+            // Label membaca dari pusat ke tepi, seperti roda undian sungguhan.
+            //
+            // Di separuh kiri teksnya akan terbalik, jadi seluruh teks diputar
+            // 180 derajat. Setelah diputar, sumbu +X lokal menghadap KE DALAM,
+            // sehingga jangkarnya harus dipindah ke tepi luar agar teks tumbuh
+            // menuju pusat. Anchor tetap 'start' di kedua kasus — memakai
+            // 'end' membuat teks tumbuh ke arah yang salah dan meluber keluar
+            // roda, yang persis terjadi pada percobaan pertama.
             const flip = mid > 90 || mid < -90;
+            const anchorR = flip ? RADIUS - 8 : LABEL_INNER;
+            const labelPos = polar(mid, anchorR);
             const showLabel = sweep >= MIN_LABEL_SWEEP;
 
             return (
               <g key={option.id}>
                 <path
                   d={segmentPath(start, sweep)}
-                  fill={shade(slot.accent, index % 2 === 0 ? -0.42 : -0.62)}
-                  stroke="rgba(255,255,255,0.14)"
-                  strokeWidth="0.8"
+                  fill={segmentFill(slot.accent, index, segments.length)}
+                  stroke="rgba(8,12,22,0.55)"
+                  strokeWidth="0.9"
                 />
                 {showLabel && (
                   <text
@@ -186,7 +261,7 @@ export function SpinWheel({ slot, weights, pickIndex, onSettle, disabled }) {
                     fontSize={labelFontSize(option.label, sweep)}
                     x={labelPos.x}
                     y={labelPos.y}
-                    textAnchor="middle"
+                    textAnchor="start"
                     dominantBaseline="middle"
                     transform={`rotate(${flip ? mid + 180 : mid} ${labelPos.x} ${labelPos.y})`}
                   >
@@ -197,13 +272,22 @@ export function SpinWheel({ slot, weights, pickIndex, onSettle, disabled }) {
             );
           })}
 
+          {/* Bingkai gelap tebal, seperti pelek roda undian. */}
           <circle
             cx={CENTER}
             cy={CENTER}
-            r={RADIUS}
+            r={RADIUS + 3.5}
             fill="none"
-            stroke="rgba(255,255,255,0.24)"
-            strokeWidth="1.5"
+            stroke="rgba(10,14,26,0.92)"
+            strokeWidth="7"
+          />
+          <circle
+            cx={CENTER}
+            cy={CENTER}
+            r={RADIUS + 6.5}
+            fill="none"
+            stroke="rgba(255,255,255,0.22)"
+            strokeWidth="1.2"
           />
         </svg>
 

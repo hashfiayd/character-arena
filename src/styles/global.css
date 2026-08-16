@@ -111,6 +111,67 @@ body::before {
   font-size: 13px;
 }
 
+.app__controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* ----------------------------------------------------------------- audio */
+
+.audio-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px 5px 6px;
+  border-radius: 999px;
+  background: var(--glass);
+  border: 1px solid var(--stroke);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.audio-controls__mute {
+  border: 0;
+  background: transparent;
+  font-size: 15px;
+  line-height: 1;
+  padding: 6px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.audio-controls__mute:hover {
+  background: var(--glass-strong);
+}
+
+.audio-controls__slider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.audio-controls__slider input {
+  width: 62px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.audio-controls__slider input:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.audio-controls__hint {
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
 .tabs {
   display: flex;
   gap: 4px;
@@ -314,7 +375,7 @@ body::before {
 
 .wheel__hub {
   position: absolute;
-  inset: 37%;
+  inset: 33%;
   border-radius: 50%;
   background: rgba(10, 14, 26, 0.72);
   border: 1px solid var(--stroke-bright);
@@ -343,6 +404,9 @@ body::before {
   font-weight: 600;
   fill: rgba(255, 255, 255, 0.92);
   pointer-events: none;
+  paint-order: stroke fill;
+  stroke: rgba(8, 12, 22, 0.55);
+  stroke-width: 2px;
   /* Ukuran font di-set per-elemen dari JS karena bergantung panjang label. */
 }
 
