@@ -676,6 +676,7 @@ body::before {
   border: 1px solid var(--stroke);
   background: #05070f;
   box-shadow: 0 22px 54px rgba(0, 0, 0, 0.5);
+  /* Rasio sebenarnya di-set inline dari ukuran arena simulasi. */
   aspect-ratio: 960 / 600;
 }
 
@@ -702,6 +703,63 @@ body::before {
   margin: 0;
   font-size: 24px;
   font-weight: 700;
+}
+
+/*
+ * Pita hasil. Ditempel di tepi atas kanvas dan hanya setinggi isinya, jadi
+ * arena tetap terlihat penuh setelah pertandingan usai — pemain bisa melihat
+ * pemenangnya berdiri di sana, bukan cuma membaca namanya.
+ */
+.arena-banner {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px 10px 16px;
+  border-radius: var(--radius-md);
+  background: rgba(8, 12, 22, 0.72);
+  border: 1px solid var(--stroke-bright);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  animation: banner-in 0.35s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+@keyframes banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arena-banner {
+    animation: none;
+  }
+}
+
+.arena-banner__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.arena-banner__title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arena-banner__meta {
+  font-size: 11.5px;
+  color: var(--text-dim);
 }
 
 .arena-toolbar {

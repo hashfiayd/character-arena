@@ -18,7 +18,7 @@
  *   8. cek akhir      — kondisi menang
  */
 
-import { ARENA, BattleMode, SIM, ZONE, FighterState } from './constants.js';
+import { arenaFor, BattleMode, SIM, ZONE, FighterState } from './constants.js';
 import { createFighter, isAlive } from './fighter.js';
 import { computeSteering } from './steering.js';
 import {
@@ -69,9 +69,21 @@ export class BattleSimulation {
     this.time = 0;
     this.events = [];
     this.log = [];
-    this.result = null;
 
-    const spawns = spawnPositions(characters.length, this.rng);
+    /**
+     * `result` diumumkan ke UI; `pendingResult` sudah ditentukan tapi ditahan
+     * selama `SIM.outroDuration` supaya penonton sempat melihat siapa yang
+     * masih berdiri sebelum layar hasil muncul.
+     */
+    this.result = null;
+    this.pendingResult = null;
+    this.outroTimer = 0;
+
+    // Arena dibuat lebih dulu karena semuanya bergantung padanya: titik spawn,
+    // batu, zona, bahkan ukuran kanvas di sisi UI.
+    this.arena = arenaFor(characters.length);
+
+    const spawns = spawnPositions(characters.length, this.rng, this.arena);
 
     /** @type {Map<string, ReturnType<typeof createFighter>>} */
     this.fighters = new Map();
@@ -103,10 +115,10 @@ export class BattleSimulation {
     // Pusat zona digeser sedikit dan acak per-seed, supaya posisi spawn tidak
     // selalu memberi keuntungan yang sama ke slot yang sama.
     this.zoneCenter = {
-      x: ARENA.width / 2 + (this.rng.next() - 0.5) * ARENA.width * 0.16,
-      y: ARENA.height / 2 + (this.rng.next() - 0.5) * ARENA.height * 0.16,
+      x: this.arena.width / 2 + (this.rng.next() - 0.5) * this.arena.width * 0.16,
+      y: this.arena.height / 2 + (this.rng.next() - 0.5) * this.arena.height * 0.16,
     };
-    this.zoneStartRadius = Math.hypot(ARENA.width, ARENA.height) / 2;
+    this.zoneStartRadius = Math.hypot(this.arena.width, this.arena.height) / 2;
     this.zone = { ...this.zoneCenter, radius: this.zoneStartRadius };
 
     /**
@@ -114,11 +126,11 @@ export class BattleSimulation {
      * Alokasi objek 60x per detik x N petarung adalah tekanan GC yang tidak
      * perlu di jalur terpanas engine.
      */
-    this.world = { zone: this.zone, obstacles: null };
+    this.world = { zone: this.zone, obstacles: null, arena: this.arena };
 
     // Batu dibuat SETELAH titik spawn diketahui, supaya tidak ada petarung
     // yang lahir tertimpa batu.
-    this.obstacles = createObstacles(this.rng, spawns);
+    this.obstacles = createObstacles(this.rng, spawns, this.arena);
     this.world.obstacles = this.obstacles;
 
     /** Proyektil yang sedang terbang. Dimutasi di tempat tiap step. */
@@ -163,7 +175,10 @@ export class BattleSimulation {
 
     this.time += dt;
     this.ctx.time = this.time;
-    this._updateZone();
+
+    // Selama outro, dunia tetap bergerak tapi tidak ada lagi yang bisa mati.
+    const inOutro = this.pendingResult !== null;
+    if (!inOutro) this._updateZone();
 
     for (const f of this.list) {
       if (!isAlive(f)) continue;
@@ -179,7 +194,7 @@ export class BattleSimulation {
     }
 
     for (const f of this.list) integrate(f, dt);
-    for (const f of this.list) resolveWalls(f);
+    for (const f of this.list) resolveWalls(f, this.arena);
 
     resolveCollisions(this.list, (a, b, impactSpeed) =>
       applyRamDamage(a, b, impactSpeed, this.ctx),
@@ -201,14 +216,23 @@ export class BattleSimulation {
 
     // Proyektil dimajukan SETELAH semua bola selesai bergerak, supaya
     // pengecekan tabrakan memakai posisi akhir — bukan posisi setengah jalan.
-    updateProjectiles(this.projectiles, this.list, this.obstacles, dt, {
+    updateProjectiles(this.projectiles, this.list, this.obstacles, dt, this.arena, {
       onFighterHit: (p, f) => resolveProjectileHit(p, f, this.ctx),
       onObstacleHit: (p, o) => resolveProjectileObstacle(p, o, this.ctx),
     });
 
-    applyBurnAuras(this.list, this.ctx, dt);
     for (const f of this.list) applyRegen(f, dt);
 
+    if (inOutro) {
+      // Semua sumber damage dimatikan. Tanpa ini, pemenang bisa mati oleh zona
+      // beberapa detik setelah menang — dan hasil yang sudah ditentukan jadi
+      // bertentangan dengan apa yang terlihat di layar.
+      this.outroTimer -= dt;
+      if (this.outroTimer <= 0) this.result = this.pendingResult;
+      return;
+    }
+
+    applyBurnAuras(this.list, this.ctx, dt);
     this._applyZoneDamage(dt);
     this._applySuddenDeath(dt);
     this._checkVictory();
@@ -227,9 +251,12 @@ export class BattleSimulation {
       this._pushLog('Zona aman mulai menyusut.');
     }
 
+    // Radius akhir ikut skala arena: zona sesempit 115 unit di arena 1360px
+    // akan memampatkan delapan bola ke satu titik.
+    const finalRadius = ZONE.finalRadius * (this.arena.width / 960);
     const t = Math.min(1, elapsed / ZONE.shrinkDuration);
     this.zone.radius =
-      this.zoneStartRadius + (ZONE.finalRadius - this.zoneStartRadius) * t;
+      this.zoneStartRadius + (finalRadius - this.zoneStartRadius) * t;
   }
 
   _applyZoneDamage(dt) {
@@ -294,7 +321,7 @@ export class BattleSimulation {
       reason = 'draw';
     }
 
-    this.result = {
+    this.pendingResult = {
       reason,
       winnerTeam: winners[0]?.teamId ?? null,
       winnerIds: winners.map((f) => f.id),
@@ -317,16 +344,18 @@ export class BattleSimulation {
         .sort((a, b) => Number(b.survived) - Number(a.survived) || b.kills - a.kills || b.damageDealt - a.damageDealt),
     };
 
+    this.outroTimer = SIM.outroDuration;
+
     this._pushLog(
       reason === 'draw'
         ? 'Seri — tidak ada yang tersisa.'
-        : `Pemenang: ${this.result.winnerNames.join(', ')}`,
+        : `Pemenang: ${this.pendingResult.winnerNames.join(', ')}`,
     );
     this.events.push({ type: 'victory' });
   }
 
   /** Menjalankan sampai selesai tanpa render — untuk test & analisis balance. */
-  runToCompletion(maxSeconds = SIM.hardTimeLimit + 5) {
+  runToCompletion(maxSeconds = SIM.hardTimeLimit + SIM.outroDuration + 5) {
     const steps = Math.ceil(maxSeconds / SIM.dt);
     for (let i = 0; i < steps && !this.result; i++) {
       this.step(SIM.dt);

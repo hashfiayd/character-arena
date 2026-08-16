@@ -12,7 +12,7 @@
  * beberapa piksel dan tidak pernah terasa saat main.
  */
 
-import { ARENA, OBSTACLE } from './constants.js';
+import { OBSTACLE } from './constants.js';
 import { isAlive } from './fighter.js';
 import * as V from '../lib/vec.js';
 
@@ -27,9 +27,13 @@ import * as V from '../lib/vec.js';
  * @param {ReturnType<import('../lib/rng.js').createRng>} rng
  * @param {Array<{x:number,y:number}>} spawns titik spawn yang harus dihindari
  */
-export function createObstacles(rng, spawns) {
+export function createObstacles(rng, spawns, arena) {
+  // Jumlah batu ikut luas arena, supaya kepadatan penghalang tetap sama
+  // berapa pun pesertanya. Arena besar dengan 4 batu terasa kosong; arena
+  // duel dengan 8 batu tidak menyisakan ruang untuk bergerak.
+  const areaScale = (arena.width * arena.height) / (960 * 600);
   const [minCount, maxCount] = OBSTACLE.countRange;
-  const target = rng.int(minCount, maxCount + 1);
+  const target = Math.round(rng.int(minCount, maxCount + 1) * areaScale);
   const [minR, maxR] = OBSTACLE.radiusRange;
 
   const obstacles = [];
@@ -40,8 +44,8 @@ export function createObstacles(rng, spawns) {
 
     const radius = rng.range(minR, maxR);
     const pos = {
-      x: rng.range(radius + 20, ARENA.width - radius - 20),
-      y: rng.range(radius + 20, ARENA.height - radius - 20),
+      x: rng.range(radius + 20, arena.width - radius - 20),
+      y: rng.range(radius + 20, arena.height - radius - 20),
     };
 
     const clearOfSpawns = spawns.every(

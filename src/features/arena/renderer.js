@@ -10,7 +10,7 @@
  * deterministik meski efek visualnya memakai acak.
  */
 
-import { ARENA, FighterState } from '../../engine/constants.js';
+import { FighterState } from '../../engine/constants.js';
 import { drawGear } from './gearArt.js';
 
 const TAU = Math.PI * 2;
@@ -289,7 +289,7 @@ export class ArenaRenderer {
    *        ditunjuk penyebabnya tapi membuat gerakan terasa murah.
    */
   draw(ctx, sim, alpha = 1) {
-    const { width, height } = ARENA;
+    const { width, height } = sim.arena;
 
     // Posisi render dihitung sekali di awal dan disimpan di fighter, karena
     // dipakai berkali-kali: badan, cincin HP, senjata, nama, jejak.
@@ -324,6 +324,8 @@ export class ArenaRenderer {
     for (const f of sim.list) {
       if (f.state !== FighterState.DEAD) drawGear(ctx, f, sim.time);
     }
+
+    if (sim.pendingResult) this._drawSurvivorSpotlight(ctx, sim);
 
     this._drawWaves(ctx);
     this._drawParticles(ctx);
@@ -675,6 +677,31 @@ export class ArenaRenderer {
     ctx.font = '600 11px ui-sans-serif, system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(f.name, x, y + r + 24);
+  }
+
+  /**
+   * Cincin berdenyut di sekeliling yang masih berdiri, muncul hanya selama
+   * jeda outro.
+   *
+   * Gunanya menjawab pertanyaan yang dulu tidak sempat terjawab: setelah
+   * pukulan terakhir, SIAPA yang sebenarnya bertahan? Sebelumnya layar hasil
+   * langsung menutupi arena di frame yang sama, jadi jawabannya cuma bisa
+   * dibaca dari teks, bukan dilihat.
+   */
+  _drawSurvivorSpotlight(ctx, sim) {
+    const pulse = 0.5 + 0.5 * Math.sin(sim.time * 6);
+
+    for (const f of sim.list) {
+      if (f.state === FighterState.DEAD) continue;
+
+      ctx.save();
+      ctx.strokeStyle = `rgba(253, 224, 71, ${0.35 + pulse * 0.45})`;
+      ctx.lineWidth = 2 + pulse * 1.6;
+      ctx.beginPath();
+      ctx.arc(f.renderX, f.renderY, f.radius + 16 + pulse * 6, 0, TAU);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   _drawWaves(ctx) {

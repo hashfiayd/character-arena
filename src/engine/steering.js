@@ -11,7 +11,7 @@
  * satu pun state machine kaku.
  */
 
-import { AI, ARENA, OBSTACLE, STEERING, FighterState } from './constants.js';
+import { AI, OBSTACLE, STEERING, FighterState } from './constants.js';
 import { canSteer, hpRatio, isAlive, isEnemy } from './fighter.js';
 import { hasLineOfSight } from './obstacles.js';
 import * as V from '../lib/vec.js';
@@ -113,16 +113,16 @@ export function desiredGap(fighter, target) {
 }
 
 /** Menjauh dari tepi arena. Tanpa ini, fighter menempel di dinding. */
-function wallAvoidance(fighter) {
-  const m = ARENA.wallMargin;
+function wallAvoidance(fighter, arena) {
+  const m = arena.wallMargin;
   const { x, y } = fighter.pos;
   let fx = 0;
   let fy = 0;
 
   if (x < m) fx += (m - x) / m;
-  if (x > ARENA.width - m) fx -= (x - (ARENA.width - m)) / m;
+  if (x > arena.width - m) fx -= (x - (arena.width - m)) / m;
   if (y < m) fy += (m - y) / m;
-  if (y > ARENA.height - m) fy -= (y - (ARENA.height - m)) / m;
+  if (y > arena.height - m) fy -= (y - (arena.height - m)) / m;
 
   if (fx === 0 && fy === 0) return null;
   return steerTowards(fighter, V.normalize({ x: fx, y: fy }), Math.min(1, Math.hypot(fx, fy)));
@@ -226,7 +226,7 @@ function engage(fighter, target, losBlocked) {
 }
 
 /** Kabur: menjauhi ancaman terdekat, bukan cuma target. */
-function flee(fighter, fighters) {
+function flee(fighter, fighters, arena) {
   let nearest = null;
   let nearestD = Infinity;
 
@@ -243,7 +243,7 @@ function flee(fighter, fighters) {
   const away = V.normalize(V.sub(fighter.pos, nearest.pos));
   // Sedikit condong ke pusat arena supaya tidak lari ke pojok dan terpojok.
   const toCenter = V.normalize(
-    V.sub({ x: ARENA.width / 2, y: ARENA.height / 2 }, fighter.pos),
+    V.sub({ x: arena.width / 2, y: arena.height / 2 }, fighter.pos),
   );
   const dir = V.normalize({
     x: away.x + toCenter.x * 0.35,
@@ -437,7 +437,7 @@ export function computeSteering(fighter, fighters, rng, dt, world = {}) {
   // Inilah yang membuat knockback terasa nyata dan bukan sekadar animasi.
   if (!canSteer(fighter)) return null;
 
-  const { zone, obstacles } = world;
+  const { zone, obstacles, arena } = world;
   const target = selectTarget(fighter, fighters, dt);
   const fleeing = updateFleeState(fighter, fighters, dt);
 
@@ -451,7 +451,7 @@ export function computeSteering(fighter, fighters, rng, dt, world = {}) {
     !hasLineOfSight(fighter.pos, target.pos, obstacles);
 
   if (fleeing) {
-    const f = flee(fighter, fighters);
+    const f = flee(fighter, fighters, arena);
     if (f) applyForce(fighter, f, W.flee);
   } else if (target) {
     const result = engage(fighter, target, losBlocked);
@@ -463,7 +463,7 @@ export function computeSteering(fighter, fighters, rng, dt, world = {}) {
   const sep = separation(fighter, fighters, target);
   if (sep) applyForce(fighter, sep, W.separation);
 
-  const wall = wallAvoidance(fighter);
+  const wall = wallAvoidance(fighter, arena);
   if (wall) applyForce(fighter, wall, W.wall);
 
   if (obstacles?.length) {

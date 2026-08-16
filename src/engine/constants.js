@@ -13,6 +13,28 @@ export const ARENA = {
   wallMargin: 70,
 };
 
+/**
+ * Ukuran arena mengikuti jumlah peserta.
+ *
+ * Yang dijaga konstan adalah KEPADATAN, bukan ukuran. Delapan bola di arena
+ * seukuran duel bukan cuma sesak secara visual — ia mengubah permainan:
+ * separation saling bertabrakan, semua orang selalu dalam jangkauan semua
+ * orang, dan senjata berjangkauan jauh kehilangan seluruh keunggulannya.
+ * Arena yang ikut tumbuh membuat jarak tetap punya arti berapa pun pesertanya.
+ *
+ * Rasio 1.6 dipertahankan di semua ukuran supaya tata letak kanvas dan
+ * proporsi di layar tidak berubah-ubah.
+ */
+export function arenaFor(fighterCount) {
+  const n = Math.max(2, Math.min(10, fighterCount));
+  const width = Math.round(Math.min(1360, 700 + n * 96));
+  return {
+    width,
+    height: Math.round(width / 1.6),
+    wallMargin: ARENA.wallMargin,
+  };
+}
+
 export const SIM = {
   /**
    * Fixed timestep. Fisika WAJIB dijalankan dengan dt tetap; kalau dt ikut
@@ -22,6 +44,20 @@ export const SIM = {
   dt: 1 / 60,
   /** Batas akumulator supaya tab yang di-background tidak memicu spiral of death. */
   maxStepsPerFrame: 5,
+
+  /**
+   * Jeda setelah pukulan terakhir sebelum hasil diumumkan.
+   *
+   * Tanpa ini, layar pemenang muncul di frame yang sama dengan pukulan
+   * mematikan — ledakan partikelnya, mayat yang terpental, dan siapa saja yang
+   * masih berdiri semuanya tertutup sebelum sempat terlihat. Momen paling
+   * memuaskan dari sebuah pertandingan justru yang paling cepat dihapus.
+   *
+   * Selama jeda ini simulasi TETAP berjalan (bola masih bergerak, efek masih
+   * memudar) tapi semua sumber damage dimatikan, supaya pemenang tidak mati
+   * oleh zona setelah menang.
+   */
+  outroDuration: 2.6,
   /** Batas durasi pertandingan (detik) sebelum sudden death. */
   softTimeLimit: 45,
   /** Setelah ini, semua fighter kehilangan HP terus-menerus supaya match selesai. */

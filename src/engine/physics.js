@@ -6,7 +6,7 @@
  * callback. Keputusan "benturan ini bikin damage berapa" ada di combat.js.
  */
 
-import { ARENA, PHYSICS } from './constants.js';
+import { PHYSICS } from './constants.js';
 import { isAlive } from './fighter.js';
 import * as V from '../lib/vec.js';
 
@@ -62,7 +62,7 @@ export function integrate(fighter, dt) {
 }
 
 /** Pantulan terhadap dinding arena. */
-export function resolveWalls(fighter) {
+export function resolveWalls(fighter, arena) {
   if (!isAlive(fighter)) return;
   const r = fighter.radius;
   const e = PHYSICS.wallRestitution;
@@ -70,16 +70,16 @@ export function resolveWalls(fighter) {
   if (fighter.pos.x - r < 0) {
     fighter.pos.x = r;
     fighter.vel.x = Math.abs(fighter.vel.x) * e;
-  } else if (fighter.pos.x + r > ARENA.width) {
-    fighter.pos.x = ARENA.width - r;
+  } else if (fighter.pos.x + r > arena.width) {
+    fighter.pos.x = arena.width - r;
     fighter.vel.x = -Math.abs(fighter.vel.x) * e;
   }
 
   if (fighter.pos.y - r < 0) {
     fighter.pos.y = r;
     fighter.vel.y = Math.abs(fighter.vel.y) * e;
-  } else if (fighter.pos.y + r > ARENA.height) {
-    fighter.pos.y = ARENA.height - r;
+  } else if (fighter.pos.y + r > arena.height) {
+    fighter.pos.y = arena.height - r;
     fighter.vel.y = -Math.abs(fighter.vel.y) * e;
   }
 }
@@ -168,10 +168,10 @@ export function applyImpulse(fighter, dirX, dirY, magnitude) {
 }
 
 /** Titik spawn melingkar supaya tidak ada yang mulai dari posisi tidak adil. */
-export function spawnPositions(count, rng) {
-  const cx = ARENA.width / 2;
-  const cy = ARENA.height / 2;
-  const radius = Math.min(ARENA.width, ARENA.height) * 0.34;
+export function spawnPositions(count, rng, arena) {
+  const cx = arena.width / 2;
+  const cy = arena.height / 2;
+  const radius = Math.min(arena.width, arena.height) * 0.34;
   const offset = rng.angle();
 
   return Array.from({ length: count }, (_, i) => {

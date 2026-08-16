@@ -115,6 +115,57 @@ dengan damage kecil — tapi jelas paling lemah (win rate ~2%).
 
 ---
 
+## Arena tumbuh mengikuti jumlah peserta
+
+Yang dijaga konstan adalah **kepadatan**, bukan ukuran:
+
+| Peserta | Arena | Luas relatif |
+|---|---|---|
+| 2 | 892 × 558 | 0.86× |
+| 4 | 1084 × 678 | 1.28× |
+| 6 | 1276 × 798 | 1.77× |
+| 8 | 1360 × 850 | 2.01× |
+
+Delapan bola di arena seukuran duel bukan cuma sesak secara visual — ia mengubah
+permainannya: gaya separation saling bertabrakan, semua orang selalu berada di
+dalam jangkauan semua orang, dan senjata berjangkauan jauh kehilangan seluruh
+keunggulannya. Rasio 1.6 dipertahankan di semua ukuran supaya tata letak halaman
+tidak melompat; yang berubah hanya seberapa luas medan di dalamnya.
+
+Jumlah batu dan radius akhir zona ikut diskalakan dengan luas arena. Tanpa itu,
+arena 1360px dengan 4 batu terasa kosong, dan zona sesempit 115 unit akan
+memampatkan delapan bola ke satu titik.
+
+Konsekuensi arsitekturalnya: `ARENA` tidak lagi konstanta global yang di-import
+di mana-mana. Ukurannya dimiliki `BattleSimulation` dan dialirkan sebagai
+parameter ke physics, obstacles, projectiles, dan steering. Sedikit lebih
+berisik di tanda tangan fungsi, tapi itu harga wajar untuk menghapus state
+global dari lapisan yang seharusnya murni.
+
+---
+
+## Jeda sebelum hasil diumumkan
+
+Dulu layar pemenang muncul di frame yang sama dengan pukulan terakhir, menutupi
+seluruh arena. Ledakan partikelnya, mayat yang terpental, dan siapa saja yang
+masih berdiri — semuanya tertutup sebelum sempat terlihat. Momen paling
+memuaskan dari sebuah pertandingan justru yang paling cepat dihapus.
+
+Sekarang dua hal berubah:
+
+1. **Simulasi tetap berjalan 2.6 detik** setelah kondisi menang tercapai
+   (`SIM.outroDuration`). Selama jeda itu semua sumber damage dimatikan — zona,
+   sudden death, aura — supaya pemenang tidak mati beberapa detik setelah
+   menang. Yang masih berdiri diberi cincin emas berdenyut.
+2. **Hasilnya berupa pita di tepi atas**, bukan lapisan penuh. Terukur: pita
+   menutupi 11.4% tinggi arena, dari sebelumnya 100%.
+
+Secara internal ini dua field terpisah: `pendingResult` sudah ditentukan tapi
+ditahan, `result` yang diumumkan ke UI. `isOver` tetap membaca `result`, jadi
+tidak ada pemanggil lama yang perlu tahu soal jeda ini.
+
+---
+
 ## Batu penghalang
 
 Batu punya tiga peran, dan ketiganya mengubah taktik:
@@ -391,6 +442,9 @@ berpengaruh:
 | `OBSTACLE.fighterDamageFactor` | Damage saat terlempar ke batu                     |
 | `PROJECTILE.spread`            | Tingkat meleset panah (pengendali utama)          |
 | `PROJECTILE.leadFactor`        | Antisipasi gerak target — pengaruhnya kecil       |
+| `SIM.outroDuration`            | Jeda sebelum hasil diumumkan                      |
+| `arenaFor(n)`                  | Rumus ukuran arena per jumlah peserta             |
+| `AI.fleeMargin`                | Seberapa yakin harus kalah sebelum memilih kabur  |
 
 Untuk bias roda, angka-angkanya ada di `data/pools.js` (`affinity`, `gearBias`)
 dan kekuatan pergeserannya di `domain/weights.js` (`TIER_BIAS`).

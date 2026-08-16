@@ -19,7 +19,7 @@
  * pemanah yang keburu mati tetap melesat dan tetap melukai.
  */
 
-import { ARENA, PROJECTILE } from './constants.js';
+import { PROJECTILE } from './constants.js';
 import { isAlive } from './fighter.js';
 import * as V from '../lib/vec.js';
 
@@ -105,6 +105,7 @@ export function updateProjectiles(
   fighters,
   obstacles,
   dt,
+  arena,
   { onFighterHit, onObstacleHit },
 ) {
   for (let i = projectiles.length - 1; i >= 0; i--) {
@@ -125,9 +126,9 @@ export function updateProjectiles(
     if (
       p.remaining <= 0 ||
       p.pos.x < -20 ||
-      p.pos.x > ARENA.width + 20 ||
+      p.pos.x > arena.width + 20 ||
       p.pos.y < -20 ||
-      p.pos.y > ARENA.height + 20
+      p.pos.y > arena.height + 20
     ) {
       projectiles.splice(i, 1);
       continue;

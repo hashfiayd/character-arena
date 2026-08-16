@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { ARENA, SIM } from '../../engine/constants.js';
+import { arenaFor, SIM } from '../../engine/constants.js';
 import { ArenaRenderer } from './renderer.js';
 import { playBattleEvents } from '../../audio/battleAudio.js';
 
@@ -39,9 +39,13 @@ export function ArenaCanvas({ simulation, running, speed = 1, audio, onUpdate, o
     if (!canvas) return undefined;
 
     const ctx = canvas.getContext('2d');
+    // Ukuran buffer mengikuti arena simulasi, bukan konstanta global — arena
+    // tumbuh sesuai jumlah peserta, dan kanvas harus ikut atau semuanya
+    // tergambar di skala yang salah.
+    const arena = simulation?.arena ?? arenaFor(4);
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = ARENA.width * dpr;
-    canvas.height = ARENA.height * dpr;
+    canvas.width = arena.width * dpr;
+    canvas.height = arena.height * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     let raf = 0;

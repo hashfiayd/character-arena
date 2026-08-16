@@ -122,7 +122,17 @@ export function BattleScreen({ roster, audio, onRecordResult }) {
   return (
     <div className="arena-layout">
       <div className="stack">
-        <div className="arena-canvas-wrap">
+        <div
+          className="arena-canvas-wrap"
+          style={{
+            // Rasio mengikuti arena simulasi. Dibiarkan 1.6 di semua ukuran
+            // supaya tata letak halaman tidak melompat saat jumlah peserta
+            // berubah — yang berubah cuma seberapa luas medan di dalamnya.
+            aspectRatio: simulation
+              ? `${simulation.arena.width} / ${simulation.arena.height}`
+              : '960 / 600',
+          }}
+        >
           <ArenaCanvas
             simulation={simulation}
             running={running}
@@ -141,26 +151,32 @@ export function BattleScreen({ roster, audio, onRecordResult }) {
             </div>
           )}
 
+          {/*
+            Hasil ditampilkan sebagai pita di ATAS arena, bukan lapisan yang
+            menutupinya. Versi lama menutup seluruh medan tepat di frame
+            pukulan terakhir — ledakan partikel, mayat yang terpental, dan
+            siapa yang masih berdiri semuanya hilang sebelum sempat dilihat.
+          */}
           {result && (
-            <div className="arena-overlay">
-              <h3 className="arena-overlay__title">
-                {result.reason === 'draw'
-                  ? 'Seri'
-                  : result.winnerNames.join(' & ')}
-              </h3>
-              <p style={{ color: 'var(--text-dim)', margin: 0 }}>
-                {result.reason === 'timeout'
-                  ? 'Menang karena sisa HP terbanyak'
-                  : result.reason === 'draw'
-                    ? 'Tidak ada yang tersisa'
-                    : 'Menang lewat eliminasi'}{' '}
-                · {result.duration.toFixed(1)} detik · seed {seed}
-              </p>
-              <div className="row" style={{ justifyContent: 'center', marginTop: 8 }}>
-                <Button variant="primary" onClick={rematch}>
-                  Tanding lagi
-                </Button>
+            <div className="arena-banner">
+              <div className="arena-banner__text">
+                <strong className="arena-banner__title">
+                  {result.reason === 'draw'
+                    ? 'Seri'
+                    : result.winnerNames.join(' & ')}
+                </strong>
+                <span className="arena-banner__meta">
+                  {result.reason === 'timeout'
+                    ? 'menang karena sisa HP terbanyak'
+                    : result.reason === 'draw'
+                      ? 'tidak ada yang tersisa'
+                      : 'menang lewat eliminasi'}{' '}
+                  · {result.duration.toFixed(1)}s · seed {seed}
+                </span>
               </div>
+              <Button size="sm" variant="primary" onClick={rematch}>
+                Tanding lagi
+              </Button>
             </div>
           )}
         </div>
